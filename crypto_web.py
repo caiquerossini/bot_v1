@@ -44,42 +44,20 @@ def init_bot():
     try:
         logger.info("Iniciando o bot...")
         bot = CryptoBot()
-        if not bot:
-            logger.error("Falha ao criar instância do bot - retornou None")
-            return False
-            
-        logger.info(f"Bot criado com sucesso. Timeframes: {bot.timeframes}")
         
-        # Inicializa o dicionário de sinais para todos os símbolos
+        # Inicializa o dicionário de sinais
         for timeframe in bot.timeframes:
-            if timeframe not in signals_data:
-                signals_data[timeframe] = {}
+            signals_data[timeframe] = {}
             for symbol in bot.symbols:
-                if symbol not in signals_data[timeframe]:
-                    signals_data[timeframe][symbol] = {
-                        'signal': None,
-                        'current_price': None,
-                        'current_time': None
-                    }
-                logger.info(f"Inicializado {symbol} para timeframe {timeframe}")
+                signals_data[timeframe][symbol] = {
+                    'signal': None,
+                    'current_price': None,
+                    'current_time': None
+                }
         
-        # Tenta obter dados iniciais para verificar se o bot está funcionando
-        test_symbol = 'BTC/USDT'
-        test_timeframe = '1h'
-        logger.info(f"Testando obtenção de dados com {test_symbol} ({test_timeframe})")
-        
-        test_data = bot.get_historical_data(test_symbol, timeframe=test_timeframe, limit=10)
-        if test_data is None:
-            logger.error("Falha ao obter dados de teste do bot")
-            return False
-            
-        logger.info(f"Teste de dados bem sucedido - obtidos {len(test_data)} registros")
-        logger.info("Bot inicializado com sucesso")
         return True
     except Exception as e:
         logger.error(f"Erro ao inicializar o bot: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
         return False
 
 def ensure_bot_initialized():
@@ -116,29 +94,10 @@ def bot_thread():
             current_time = pd.Timestamp.now()
             last_update_time = current_time
             
-            logger.info("Iniciando atualização dos dados...")
-            successful_updates = 0
-            total_pairs = len(bot.symbols) * len(bot.timeframes)
-            
-            # Garante que todos os timeframes e símbolos existam
             for timeframe in bot.timeframes:
-                if timeframe not in signals_data:
-                    signals_data[timeframe] = {}
-                for symbol in bot.symbols:
-                    if symbol not in signals_data[timeframe]:
-                        signals_data[timeframe][symbol] = {
-                            'signal': None,
-                            'current_price': None,
-                            'current_time': None
-                        }
-            
-            for timeframe in bot.timeframes:
-                logger.info(f"\nProcessando timeframe {timeframe}")
                 for symbol in bot.symbols:
                     try:
-                        logger.info(f"Obtendo dados para {symbol} ({timeframe})")
                         df = bot.get_historical_data(symbol, timeframe=timeframe)
-                        
                         if df is not None and len(df) > 0:
                             current_price = float(df['close'].iloc[-1])
                             bot.generate_signals(df, symbol, timeframe)
@@ -148,25 +107,13 @@ def bot_thread():
                                 'current_price': current_price,
                                 'current_time': current_time
                             }
-                            successful_updates += 1
-                            logger.info(f"Dados atualizados com sucesso para {symbol} ({timeframe}) - Preço: {current_price:.8f}")
-                        else:
-                            logger.warning(f"Sem dados para {symbol} ({timeframe})")
-                            # Mantém os dados anteriores se existirem
-                            if timeframe in signals_data and symbol in signals_data[timeframe]:
-                                logger.info(f"Mantendo dados anteriores para {symbol} ({timeframe})")
                     except Exception as e:
                         logger.error(f"Erro ao processar {symbol} ({timeframe}): {str(e)}")
-                        import traceback
-                        logger.error(traceback.format_exc())
                         continue
             
-            logger.info(f"Atualização concluída. {successful_updates}/{total_pairs} pares atualizados com sucesso.")
             time.sleep(60)
         except Exception as e:
             logger.error(f"Erro na thread do bot: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
             time.sleep(60)
 
 # Usuário e senha fixos para autenticação simples
@@ -292,20 +239,8 @@ if __name__ == '__main__':
         os.makedirs('static/css', exist_ok=True)
         
         # Inicializa o bot
-        logger.info("Tentando inicializar o bot...")
-        max_retries = 5
-        retry_delay = 5
-        
-        for attempt in range(max_retries):
-            logger.info(f"Tentativa {attempt + 1} de {max_retries} de inicializar o bot")
-            if init_bot():
-                break
-            if attempt < max_retries - 1:
-                logger.info(f"Aguardando {retry_delay} segundos antes da próxima tentativa...")
-                time.sleep(retry_delay)
-                retry_delay *= 2
-        else:
-            logger.error("Falha definitiva ao inicializar o bot. Encerrando aplicação.")
+        if not init_bot():
+            logger.error("Falha ao inicializar o bot. Encerrando aplicação.")
             sys.exit(1)
 
         # Inicia o bot em uma thread separada
@@ -316,14 +251,7 @@ if __name__ == '__main__':
         
         # Inicia o servidor web
         port = int(os.environ.get('PORT', 5000))
-        logger.info(f"Iniciando servidor web na porta {port}...")
-        
-        if os.environ.get('RENDER'):
-            # Configurações específicas para o Render
-            app.run(host='0.0.0.0', port=port, debug=False)
-        else:
-            # Configurações para desenvolvimento local
-            app.run(host='0.0.0.0', port=port, debug=False)
+        app.run(host='0.0.0.0', port=port, debug=False)
             
     except Exception as e:
         logger.error(f"Erro fatal ao iniciar a aplicação: {e}")

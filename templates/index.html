@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sinais de Criptomoedas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header style="width: 100%; background: var(--card-bg); box-shadow: 0 2px 12px rgba(33,150,243,0.10); padding: 0.7rem 0; margin-bottom: 2rem;">
+        <div style="max-width: var(--container-width); margin: 0 auto; display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <span style="font-size: 1.5rem; font-weight: 800; letter-spacing: 1px; color: #4cafef;">CRYPTO SIGNALS</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1.2rem; background: var(--card-bg); padding: 0.4rem 1.2rem; border-radius: 32px; box-shadow: 0 2px 12px rgba(33,150,243,0.10);">
+                <a href="/profile" style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-color); text-decoration: none; font-weight: 600; font-size: 1.08rem; padding: 0.3rem 1rem 0.3rem 0.7rem; border-radius: 20px; transition: background 0.2s;">
+                    <span style="font-size: 1.3rem;">👤</span>
+                    <span>admin</span>
+                </a>
+                <a href="/logout" style="background: var(--danger-color); color: #fff; padding: 0.3rem 1.2rem; border-radius: 20px; text-decoration: none; font-weight: 600; font-size: 1.05rem; box-shadow: 0 2px 8px rgba(244,67,54,0.10); transition: background 0.2s; margin-left: 0.5rem;">
+                    <span style="vertical-align: middle; margin-right: 0.4rem;">⏻</span> Sair
+                </a>
+            </div>
+        </div>
+    </header>
+    <div style="display: flex; gap: 2rem; flex-wrap: wrap; justify-content: center; align-items: flex-start;">
+        {% for timeframe in ['1h', '2h', '1d'] %}
+        <div class="timeframe-section" style="flex: 1 1 500px; min-width: 350px;">
+            <h1 class="timeframe-title">Sinais {{ timeframe }}</h1>
+            <div class="grid-container" style="grid-template-columns: repeat(2, 1fr); gap: 1.5rem;">
+                {% for symbol, data in signals[timeframe].items() %}
+                    <div class="signal-card {% if data.signal and data.signal.type == 'LONG' %}long{% elif data.signal and data.signal.type == 'SHORT' %}short{% endif %}">
+                        <div class="header-info">
+                            <span class="symbol">{{ symbol }}</span>
+                        </div>
+                        <div class="price-info" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                            <div class="price-box">
+                                <span class="price-label">Preço Atual</span>
+                                <span class="price-value" id="current-price-{{ timeframe }}-{{ symbol.replace('/', '-') }}">
+                                    {{ "{:.8g}".format(data.current_price) if data.current_price else "N/A" }}
+                                </span>
+                            </div>
+                            <div class="price-box">
+                                <span class="price-label">Preço do Sinal</span>
+                                <span class="price-value">
+                                    {{ "{:.8g}".format(data.signal.price) if data.signal and data.signal.price else "N/A" }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="signal-info">
+                            {% if data.signal and data.signal.type %}
+                            <span class="signal-type {{ data.signal.type.lower() }}">{{ data.signal.type }}</span>
+                            {% else %}
+                            <span class="signal-type">Sem sinal</span>
+                            {% endif %}
+                        </div>
+                        <div class="time-info">
+                            {% if data.signal and data.signal.timestamp %}
+                            <div class="date">{{ data.signal.timestamp.strftime('%d/%m/%Y') }}</div>
+                            <div class="time">{{ data.signal.timestamp.strftime('%H:%M') }}</div>
+                            <div class="elapsed" id="elapsed-{{ timeframe }}-{{ symbol.replace('/', '-') }}">
+                                {{ data.elapsed_time if data.elapsed_time else '' }}
+                            </div>
+                            {% else %}
+                            <div class="date">--/--/----</div>
+                            <div class="time">--:--</div>
+                            <div class="elapsed">Sem histórico</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="time-bar">
+        <div class="current-time" id="current-time"></div>
+        <div class="countdown" id="countdown" style="margin-left: auto; font-size: 1.2rem; font-weight: 600;"></div>
+    </div>
+
+    <script>
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toLocaleString('pt-BR');
+        }
+
+        // Cronômetro regressivo sincronizado com o backend
+        let countdownValue = parseInt('{{ seconds_left }}');
+        function updateCountdown() {
+            const countdownEl = document.getElementById('countdown');
+            countdownEl.textContent = `Próxima atualização em ${countdownValue} segundos`;
+            countdownValue--;
+            if (countdownValue < 0) {
+                countdownValue = 60;
+            }
+        }
+
+        function updatePrices() {
+            fetch('/get_prices')
+                .then(response => response.json())
+                .then(data => {
+                    for (const timeframe in data) {
+                        for (const symbol in data[timeframe]) {
+                            const symbolData = data[timeframe][symbol];
+                            if (!symbolData) continue;
+
+                            const currentPrice = symbolData.current_price;
+                            const signalPrice = symbolData.signal?.price;
+                            
+                            const currentPriceElement = document.getElementById(`current-price-${timeframe}-${symbol.replace('/', '-')}`);
+                            const priceChangeElement = document.getElementById(`price-change-${timeframe}-${symbol.replace('/', '-')}`);
+                            const elapsedElement = document.getElementById(`elapsed-${timeframe}-${symbol.replace('/', '-')}`);
+                            
+                            if (currentPriceElement && currentPrice) {
+                                currentPriceElement.textContent = currentPrice.toFixed(8).replace(/\.?0+$/, '');
+                            }
+                            
+                            if (priceChangeElement && currentPrice && signalPrice) {
+                                const priceChange = ((currentPrice - signalPrice) / signalPrice) * 100;
+                                priceChangeElement.textContent = `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%`;
+                                priceChangeElement.className = `price-change ${priceChange >= 0 ? 'positive' : 'negative'}`;
+                            }
+                            
+                            if (elapsedElement && symbolData.elapsed_time) {
+                                const elapsed = symbolData.elapsed_time;
+                                elapsedElement.textContent = elapsed === "Agora" ? "Agora" : elapsed + " minutos";
+                            }
+                        }
+                    }
+                })
+                .catch(error => console.error('Erro ao atualizar preços:', error));
+        }
+
+        setInterval(updateTime, 1000);
+        setInterval(updateCountdown, 1000);
+        updateTime();
+        updateCountdown();
+        setInterval(updatePrices, 5000);
+        updatePrices();
+    </script>
+</body>
+</html> 

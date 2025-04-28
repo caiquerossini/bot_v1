@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minha Conta - Bot de Criptomoedas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .profile-container {
+            max-width: 440px;
+            margin: 60px auto;
+            background: var(--card-bg);
+            padding: var(--spacing-lg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            color: var(--text-color);
+            position: relative;
+        }
+        .profile-title {
+            text-align: center;
+            font-size: 2.2rem;
+            margin-bottom: var(--spacing-lg);
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        .service-badge {
+            display: block;
+            margin: 0 auto var(--spacing-md) auto;
+            background: linear-gradient(90deg, #4caf50, #2196f3);
+            color: #fff;
+            font-weight: 700;
+            font-size: 1.1rem;
+            padding: 8px 24px;
+            border-radius: 20px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(33,150,243,0.15);
+        }
+        .profile-form {
+            display: flex;
+            flex-direction: column;
+            gap: var(--spacing-md);
+        }
+        .profile-label {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .profile-input {
+            width: 100%;
+            padding: 10px;
+            border-radius: var(--border-radius);
+            border: none;
+            background: #222;
+            color: var(--text-color);
+            font-size: 1rem;
+            margin-bottom: 8px;
+        }
+        .profile-status {
+            background: var(--success-color);
+            color: #fff;
+            border-radius: 12px;
+            padding: 8px 0;
+            text-align: center;
+            font-weight: 600;
+            margin-bottom: var(--spacing-md);
+        }
+        .profile-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: var(--spacing-md);
+        }
+        .profile-btn {
+            flex: 1;
+            padding: 12px;
+            background: var(--success-color);
+            color: #fff;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .profile-btn.logout {
+            background: var(--danger-color);
+        }
+        .profile-btn.logout:hover {
+            background: #b71c1c;
+        }
+        .profile-btn.save:hover {
+            background: #388e3c;
+        }
+        .profile-footer {
+            margin-top: var(--spacing-lg);
+            text-align: center;
+            font-size: 0.95rem;
+            opacity: 0.7;
+        }
+    </style>
+    <script>
+        function enableEdit() {
+            document.getElementById('username').removeAttribute('readonly');
+            document.getElementById('email').removeAttribute('readonly');
+            document.getElementById('save-btn').style.display = 'inline-block';
+        }
+        function saveProfile() {
+            alert('Dados salvos com sucesso! (Funcionalidade demonstrativa)');
+            document.getElementById('username').setAttribute('readonly', true);
+            document.getElementById('email').setAttribute('readonly', true);
+            document.getElementById('save-btn').style.display = 'none';
+        }
+    </script>
+</head>
+<body>
+    <div class="profile-container">
+        <a href="/" style="position: absolute; left: -56px; top: 32px; background: var(--card-bg); color: var(--text-color); border-radius: 50%; box-shadow: 0 2px 8px rgba(33,150,243,0.10); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 1.7rem; text-decoration: none; border: 2px solid #222; transition: background 0.2s, color 0.2s; z-index: 2;"><span style="margin-left: -2px;">&#8592;</span></a>
+        <div class="service-badge">Acesso Premium ao Bot de Sinais de Criptomoedas</div>
+        <div class="profile-title">Minha Conta</div>
+        <div class="profile-status">Assinatura ativa</div>
+        <form class="profile-form" onsubmit="event.preventDefault(); saveProfile();">
+            <label class="profile-label" for="username">Usuário</label>
+            <input class="profile-input" id="username" name="username" type="text" value="admin" readonly>
+            <label class="profile-label" for="email">E-mail</label>
+            <input class="profile-input" id="email" name="email" type="email" value="admin@seudominio.com" readonly>
+            <div class="profile-actions">
+                <button type="button" class="profile-btn save" id="save-btn" style="display:none;" onclick="saveProfile()">Salvar</button>
+                <button type="button" class="profile-btn" onclick="enableEdit()">Editar</button>
+                <a href="/logout" class="profile-btn logout">Sair</a>
+            </div>
+        </form>
+        <div class="profile-footer">
+            Gerencie sua conta, altere seus dados e acesse todos os recursos premium do nosso bot de sinais.<br>
+            Suporte: suporte@seudominio.com
+        </div>
+    </div>
+</body>
+</html> 

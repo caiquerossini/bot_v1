@@ -1,7 +1,6 @@
 import ccxt
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
 from datetime import datetime, timedelta
 import time
 import os
@@ -47,7 +46,7 @@ class HeikinAshi:
         return result
 
 class ChandelierExit:
-    def __init__(self, atr_period: int = 2, atr_multiplier: float = 1.0, use_close: bool = True):
+    def __init__(self, atr_period: int = 1, atr_multiplier: float = 0.8, use_close: bool = True):
         self.atr_period = atr_period
         self.atr_multiplier = atr_multiplier
         self.use_close = use_close
@@ -131,7 +130,7 @@ class ChandelierExit:
 class CryptoBot:
     def __init__(self):
         """
-        Inicializa o bot com a Binance
+        Inicializa o bot com a Binance (apenas API pública)
         """
         print("Inicializando bot...")
         self.exchange = ccxt.binance({
@@ -141,175 +140,243 @@ class CryptoBot:
             }
         })
         
-        self.symbols = [
-            'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
-            'LINK/USDT', 'ADA/USDT', 'AAVE/USDT'
-        ]
-        
-        self.timeframes = ['1h', '4h']
+        self.symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'SOL/USDT']
+        self._timeframes = ['1h', '2h', '1d']  # Timeframes padrão
         self.signal_history = {
-            tf: {symbol: None for symbol in self.symbols} 
-            for tf in self.timeframes
+            '1h': {},
+            '2h': {},
+            '1d': {}
         }
-        self.last_email_sent = {
-            tf: {symbol: {'type': None, 'timestamp': None} for symbol in self.symbols}
-            for tf in self.timeframes
-        }
-        self.chandelier = ChandelierExit(atr_period=2, atr_multiplier=1.0, use_close=True)
+        self.sent_emails = {}  # Controle de emails enviados
+        self.chandelier = ChandelierExit(atr_period=2, atr_multiplier=1.0, use_close=False)
         self.heikin_ashi = HeikinAshi()
-        self.last_signal_time = {
-            tf: {symbol: None for symbol in self.symbols}
-            for tf in self.timeframes
-        }
         print("Bot inicializado com sucesso!")
-        
+        print(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
+
+    @property
+    def timeframes(self):
+        return self._timeframes
+
+    @timeframes.setter
+    def timeframes(self, value):
+        self._timeframes = value
+        # Atualiza o histórico de sinais para os novos timeframes
+        self.signal_history = {tf: {} for tf in value}
+
     def get_historical_data(self, symbol, timeframe='1h', limit=100):
         """
-        Obtém dados históricos de preços
+        Obtém dados históricos de preços usando apenas API pública
         """
         try:
             print(f"Obtendo dados para {symbol}...")
-            # Obtém dados de 1h para análise principal
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            
-            # Obtém dados de 1m para preço atual
-            ohlcv_1m = self.exchange.fetch_ohlcv(symbol, '1m', limit=1)
-            current_price = ohlcv_1m[0][4] if ohlcv_1m else None
-            
-            # Ajusta o timestamp para o fuso horário do Brasil (UTC-3)
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms') - timedelta(hours=3)
             df = df.sort_values('timestamp')
             df = df.reset_index(drop=True)
-            
-            if current_price:
-                df.loc[df.index[-1], 'close'] = current_price
-            
             print(f"Dados obtidos com sucesso para {symbol}")
             return df
         except Exception as e:
             print(f"Erro ao obter dados históricos para {symbol}: {e}")
             return None
 
-    def send_email_alert(self, symbol, signal, timeframe):
-        """Envia alerta por email apenas se for um novo sinal"""
+    def analyze_signals(self, df):
+        """
+        Analisa todo o gráfico para encontrar sinais
+        """
+        if len(df) < 3:  # Mínimo de velas necessário
+            return None, None
+
+        # 1. Converte para Heikin Ashi
+        ha_df = self.heikin_ashi.calculate(df)
+        
+        # 2. Calcula Chandelier Exit com parâmetros corretos
+        ce_df = self.chandelier.calculate(ha_df)
+
+        # 3. Procura sinais em todo o gráfico
+        signals = []
+        
+        # Analisa todas as velas exceto a última
+        for i in range(1, len(ce_df)-1):
+            current = ce_df.iloc[i]
+            prev_candle = ce_df.iloc[i-1]
+            
+            # Verifica sinal LONG
+            if (current['buy_signal'] and 
+                current['close'] > prev_candle['high'] and
+                current['close'] > current['open']):  # Confirmação adicional
+                signals.append({
+                    'type': 'LONG',
+                    'price': current['close'],
+                    'timestamp': df['timestamp'].iloc[i]
+                })
+            
+            # Verifica sinal SHORT
+            elif (current['sell_signal'] and 
+                  current['close'] < prev_candle['low'] and
+                  current['close'] < current['open']):  # Confirmação adicional
+                signals.append({
+                    'type': 'SHORT',
+                    'price': current['close'],
+                    'timestamp': df['timestamp'].iloc[i]
+                })
+
+        # 4. Verifica se há um novo sinal na última vela
+        current_signal = None
+        if len(ce_df) >= 2:
+            last_candle = ce_df.iloc[-1]
+            prev_candle = ce_df.iloc[-2]
+
+            # Novo sinal LONG
+            if (last_candle['buy_signal'] and 
+                last_candle['close'] > prev_candle['high'] and
+                last_candle['close'] > last_candle['open']):
+                current_signal = {
+                    'type': 'LONG',
+                    'price': last_candle['close'],
+                    'timestamp': df['timestamp'].iloc[-1]
+                }
+            
+            # Novo sinal SHORT
+            elif (last_candle['sell_signal'] and 
+                  last_candle['close'] < prev_candle['low'] and
+                  last_candle['close'] < last_candle['open']):
+                current_signal = {
+                    'type': 'SHORT',
+                    'price': last_candle['close'],
+                    'timestamp': df['timestamp'].iloc[-1]
+                }
+
+        # 5. Retorna o sinal atual (se houver) e o último sinal válido
+        last_signal = signals[-1] if signals else None
+        
+        # Se o sinal atual for do mesmo tipo que o último, mantém apenas o atual
+        if current_signal and last_signal and current_signal['type'] == last_signal['type']:
+            last_signal = None
+
+        return current_signal, last_signal
+
+    def generate_signals(self, df, symbol, timeframe):
+        """
+        Gera sinais com confirmação e análise histórica
+        """
+        if df is None or len(df) < 3:
+            return
+            
+        # Analisa os sinais
+        current_signal, last_signal = self.analyze_signals(df)
+        
+        # Se tiver sinal atual, usa ele
+        if current_signal:
+            self.signal_history[timeframe][symbol] = current_signal
+            # Envia email apenas para sinais novos
+            if self.is_new_signal(symbol, timeframe, current_signal):
+                self.send_signal_email(
+                    symbol, 
+                    timeframe, 
+                    current_signal['type'], 
+                    current_signal['price'],
+                    last_signal
+                )
+        # Se não tiver sinal atual mas tiver último sinal, usa o último
+        elif last_signal:
+            self.signal_history[timeframe][symbol] = last_signal
+
+        # Imprime informações sobre o sinal
+        signal_to_show = current_signal or last_signal
+        print(f"\nSinal para {symbol} ({timeframe}):")
+        if signal_to_show:
+            print(f"Tipo: {signal_to_show['type']}")
+            print(f"Preço: {signal_to_show['price']:.8f}")
+            print(f"Data/Hora: {signal_to_show['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            print("Nenhum sinal encontrado")
+
+    def is_new_signal(self, symbol, timeframe, current_signal):
+        if timeframe not in self.signal_history:
+            return True
+        if symbol not in self.signal_history[timeframe]:
+            return True
+        last_signal = self.signal_history[timeframe][symbol]
+        if not last_signal:
+            return True
+        return last_signal['type'] != current_signal['type']
+
+    def send_signal_email(self, symbol, timeframe, signal_type, price, last_signal=None):
+        signal_key = f"{symbol}_{timeframe}_{signal_type}"
+        
+        if signal_key in self.sent_emails:
+            return False
+            
         try:
-            current_time = pd.Timestamp.now()
+            email = config.EMAIL_FROM
+            password = config.EMAIL_PASS
+            recipient = config.EMAIL_TO
             
-            # Verifica se já enviou email para este tipo de sinal nas últimas 4 horas
-            if (self.last_email_sent[timeframe][symbol]['type'] == signal['type'] and 
-                self.last_email_sent[timeframe][symbol]['timestamp'] is not None and
-                (current_time - self.last_email_sent[timeframe][symbol]['timestamp']).total_seconds() < 14400):
-                return
-            
-            # Verifica se o sinal é o mesmo que o último enviado
-            if (self.last_signal_time[timeframe][symbol] is not None and
-                signal['type'] == self.signal_history[timeframe][symbol]['type'] and
-                (current_time - self.last_signal_time[timeframe][symbol]).total_seconds() < 14400):
-                return
-            
-            email_from = config.EMAIL_FROM
-            email_pass = config.EMAIL_PASS
-            email_to = config.EMAIL_TO
+            if not all([email, password, recipient]):
+                print("Configurações de e-mail ausentes")
+                return False
             
             msg = MIMEMultipart()
-            msg['From'] = email_from
-            msg['To'] = email_to
-            msg['Subject'] = f"Alerta de Trading - {symbol} ({timeframe})"
+            msg['From'] = email
+            msg['To'] = recipient
+            msg['Subject'] = f"Novo Sinal: {symbol} {timeframe} - {signal_type}"
             
             body = f"""
-            Novo sinal detectado para {symbol} ({timeframe}):
+            Novo sinal detectado:
             
-            Tipo: {signal['type']}
-            Preço: {signal['price']:.4f}
-            Data/Hora: {signal['timestamp'].strftime('%d/%m/%Y %H:%M:%S')}
+            Símbolo: {symbol}
+            Timeframe: {timeframe}
+            Tipo: {signal_type}
+            Preço: {price:.8f}
+            Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             """
+
+            if last_signal:
+                body += f"""
+                
+                Último sinal anterior:
+                Tipo: {last_signal['type']}
+                Preço: {last_signal['price']:.8f}
+                Data/Hora: {last_signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+                """
             
             msg.attach(MIMEText(body, 'plain'))
             
-            server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-            server.login(email_from, email_pass)
-            server.send_message(msg)
-            server.quit()
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                server.login(email, password)
+                server.send_message(msg)
             
-            # Atualiza o controle de emails enviados e último sinal
-            self.last_email_sent[timeframe][symbol] = {
-                'type': signal['type'],
-                'timestamp': current_time
-            }
-            self.last_signal_time[timeframe][symbol] = current_time
-            
-            print(f"Email enviado com sucesso para {symbol} ({timeframe})!")
+            self.sent_emails[signal_key] = datetime.now()
+            print(f"Email enviado com sucesso para {symbol} ({timeframe})")
+            return True
             
         except Exception as e:
-            print(f"Erro ao enviar email: {e}")
-
-    def generate_signals(self, df, symbol, timeframe):
-        """Gera sinais de trading usando Heikin Ashi e Chandelier Exit"""
-        try:
-            # Primeiro calcula o Heikin Ashi
-            ha_df = self.heikin_ashi.calculate(df)
-            
-            # Depois aplica o Chandelier Exit nos dados Heikin Ashi
-            result = self.chandelier.calculate(ha_df)
-            
-            # Verifica os últimos sinais
-            last_index = result.index[-2]  # Usa o penúltimo candle para evitar sinais incompletos
-            
-            if result.loc[last_index, 'buy_signal']:
-                signal = {
-                    'type': 'LONG',
-                    'price': float(df.loc[last_index, 'close']),
-                    'timestamp': df.loc[last_index, 'timestamp']
-                }
-                if (self.signal_history[timeframe][symbol] is None or 
-                    self.signal_history[timeframe][symbol]['type'] != 'LONG'):
-                    self.signal_history[timeframe][symbol] = signal
-                    print(f"\nNovo sinal LONG para {symbol} ({timeframe}):")
-                    print(f"Preço: {signal['price']:.4f}")
-                    print(f"Data/Hora: {signal['timestamp']}")
-                    self.send_email_alert(symbol, signal, timeframe)
-                    
-            elif result.loc[last_index, 'sell_signal']:
-                signal = {
-                    'type': 'SHORT',
-                    'price': float(df.loc[last_index, 'close']),
-                    'timestamp': df.loc[last_index, 'timestamp']
-                }
-                if (self.signal_history[timeframe][symbol] is None or 
-                    self.signal_history[timeframe][symbol]['type'] != 'SHORT'):
-                    self.signal_history[timeframe][symbol] = signal
-                    print(f"\nNovo sinal SHORT para {symbol} ({timeframe}):")
-                    print(f"Preço: {signal['price']:.4f}")
-                    print(f"Data/Hora: {signal['timestamp']}")
-                    self.send_email_alert(symbol, signal, timeframe)
-            
-            print(f"\nÚltimo sinal para {symbol} ({timeframe}):")
-            if self.signal_history[timeframe][symbol]:
-                signal = self.signal_history[timeframe][symbol]
-                print(f"Tipo: {signal['type']}")
-                print(f"Preço: {signal['price']}")
-                print(f"Data/Hora: {signal['timestamp']}")
-            else:
-                print("Nenhum sinal registrado ainda")
-                
-        except Exception as e:
-            print(f"Erro ao gerar sinais para {symbol} ({timeframe}): {e}")
+            print(f"Erro ao enviar e-mail: {e}")
+            return False
 
     def run(self):
         """
         Executa o bot em loop contínuo
         """
         print("Iniciando monitoramento das criptomoedas...")
+        print(f"Símbolos monitorados ({len(self.symbols)}): {', '.join(self.symbols)}")
         
         while True:
             try:
                 for timeframe in self.timeframes:
+                    print(f"\nAnalisando timeframe {timeframe}:")
                     for symbol in self.symbols:
-                        print(f"\nVerificando {symbol} ({timeframe})...")
-                        df = self.get_historical_data(symbol, timeframe=timeframe)
-                        if df is not None:
-                            self.generate_signals(df, symbol, timeframe)
+                        try:
+                            print(f"\nVerificando {symbol}...")
+                            df = self.get_historical_data(symbol, timeframe=timeframe)
+                            if df is not None:
+                                self.generate_signals(df, symbol, timeframe)
+                            else:
+                                print(f"Erro ao obter dados para {symbol}")
+                        except Exception as e:
+                            print(f"Erro ao processar {symbol}: {e}")
+                            continue
                 
                 print("\nAguardando 60 segundos para próxima verificação...")
                 time.sleep(60)

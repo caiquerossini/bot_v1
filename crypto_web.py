@@ -40,7 +40,7 @@ last_update_time = None  # Timestamp da última atualização do bot
 
 def init_bot():
     """Inicializa o bot com tratamento de erros"""
-    global bot
+    global bot, signals_data
     try:
         logger.info("Iniciando o bot...")
         bot = CryptoBot()
@@ -50,30 +50,30 @@ def init_bot():
             
         logger.info(f"Bot criado com sucesso. Timeframes: {bot.timeframes}")
         
-        # Tenta obter dados iniciais para verificar se o bot está funcionando
-        test_symbol = 'BTC/USDT'
-        test_timeframe = '1h'
-        logger.info(f"Testando obtenção de dados com {test_symbol} ({test_timeframe})")
-        
-        test_data = bot.get_historical_data(test_symbol, timeframe=test_timeframe)
-        if test_data is None or len(test_data) == 0:
-            logger.error("Falha ao obter dados de teste do bot")
-            return False
-            
-        logger.info(f"Teste de dados bem sucedido - obtidos {len(test_data)} registros")
-        
         # Inicializa o dicionário de sinais para todos os símbolos
         for timeframe in bot.timeframes:
             if timeframe not in signals_data:
                 signals_data[timeframe] = {}
             for symbol in bot.symbols:
-                signals_data[timeframe][symbol] = {
-                    'signal': None,
-                    'current_price': None,
-                    'current_time': None
-                }
+                if symbol not in signals_data[timeframe]:
+                    signals_data[timeframe][symbol] = {
+                        'signal': None,
+                        'current_price': None,
+                        'current_time': None
+                    }
                 logger.info(f"Inicializado {symbol} para timeframe {timeframe}")
         
+        # Tenta obter dados iniciais para verificar se o bot está funcionando
+        test_symbol = 'BTC/USDT'
+        test_timeframe = '1h'
+        logger.info(f"Testando obtenção de dados com {test_symbol} ({test_timeframe})")
+        
+        test_data = bot.get_historical_data(test_symbol, timeframe=test_timeframe, limit=10)
+        if test_data is None:
+            logger.error("Falha ao obter dados de teste do bot")
+            return False
+            
+        logger.info(f"Teste de dados bem sucedido - obtidos {len(test_data)} registros")
         logger.info("Bot inicializado com sucesso")
         return True
     except Exception as e:
@@ -120,6 +120,18 @@ def bot_thread():
             successful_updates = 0
             total_pairs = len(bot.symbols) * len(bot.timeframes)
             
+            # Garante que todos os timeframes e símbolos existam
+            for timeframe in bot.timeframes:
+                if timeframe not in signals_data:
+                    signals_data[timeframe] = {}
+                for symbol in bot.symbols:
+                    if symbol not in signals_data[timeframe]:
+                        signals_data[timeframe][symbol] = {
+                            'signal': None,
+                            'current_price': None,
+                            'current_time': None
+                        }
+            
             for timeframe in bot.timeframes:
                 logger.info(f"\nProcessando timeframe {timeframe}")
                 for symbol in bot.symbols:
@@ -143,12 +155,6 @@ def bot_thread():
                             # Mantém os dados anteriores se existirem
                             if timeframe in signals_data and symbol in signals_data[timeframe]:
                                 logger.info(f"Mantendo dados anteriores para {symbol} ({timeframe})")
-                            else:
-                                signals_data[timeframe][symbol] = {
-                                    'signal': None,
-                                    'current_price': None,
-                                    'current_time': None
-                                }
                     except Exception as e:
                         logger.error(f"Erro ao processar {symbol} ({timeframe}): {str(e)}")
                         import traceback

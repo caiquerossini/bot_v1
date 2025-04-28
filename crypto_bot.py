@@ -144,38 +144,53 @@ class CryptoBot:
             logger.info("Configurando conexão com a Binance...")
             self.exchange = ccxt.binance({
                 'enableRateLimit': True,
+                'timeout': 30000,  # Aumenta o timeout para 30 segundos
                 'options': {
-                    'defaultType': 'spot'
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                    'recvWindow': 60000
                 }
             })
             
-            logger.info("Configurando parâmetros iniciais...")
+            # Define os símbolos e timeframes antes de carregar os mercados
             self.symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'SOL/USDT']
-            self._timeframes = ['1h', '2h', '1d']  # Timeframes padrão
-            self.signal_history = {
-                '1h': {},
-                '2h': {},
-                '1d': {}
-            }
-            self.sent_emails = {}  # Controle de emails enviados
+            self._timeframes = ['1h', '2h', '1d']
+            
+            logger.info("Inicializando estruturas de dados...")
+            self.signal_history = {timeframe: {} for timeframe in self._timeframes}
+            self.sent_emails = {}
+            
+            # Inicializa os indicadores
             self.chandelier = ChandelierExit(atr_period=2, atr_multiplier=1.0, use_close=False)
             self.heikin_ashi = HeikinAshi()
             
-            # Testa a conexão com a exchange
+            # Testa a conexão e carrega os mercados
             logger.info("Testando conexão com a Binance...")
-            self.exchange.load_markets()
-            logger.info("Conexão com a Binance estabelecida com sucesso")
+            self.exchange.load_markets(reload=True)  # Força o recarregamento dos mercados
             
+            # Verifica se todos os símbolos estão disponíveis
+            available_symbols = self.exchange.symbols
+            for symbol in self.symbols:
+                if symbol not in available_symbols:
+                    logger.warning(f"Símbolo {symbol} não disponível na Binance")
+            
+            # Verifica se todos os timeframes estão disponíveis
+            available_timeframes = self.exchange.timeframes
+            for timeframe in self._timeframes:
+                if timeframe not in available_timeframes:
+                    logger.warning(f"Timeframe {timeframe} não suportado pela Binance")
+            
+            # Testa a obtenção de dados para um par
+            test_symbol = 'BTC/USDT'
+            test_data = self.get_historical_data(test_symbol, '1h', 10)
+            if test_data is None:
+                raise Exception("Falha no teste de obtenção de dados")
+                
             logger.info("Bot inicializado com sucesso!")
             logger.info(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
-        except ccxt.NetworkError as e:
-            logger.error(f"Erro de rede ao conectar com a Binance: {str(e)}")
-            raise
-        except ccxt.ExchangeError as e:
-            logger.error(f"Erro da exchange: {str(e)}")
-            raise
+            
         except Exception as e:
-            logger.error(f"Erro inesperado ao inicializar o bot: {str(e)}")
+            logger.error(f"Erro ao inicializar o bot: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             raise
@@ -201,20 +216,26 @@ class CryptoBot:
             if symbol not in self.exchange.markets:
                 logger.error(f"Símbolo {symbol} não encontrado na Binance")
                 return None
-                
-            # Verifica se o timeframe é suportado
-            if timeframe not in self.exchange.timeframes:
-                logger.error(f"Timeframe {timeframe} não suportado pela Binance")
-                return None
             
             # Tenta obter os dados com retry
             max_retries = 3
             retry_delay = 2
+            last_error = None
             
             for attempt in range(max_retries):
                 try:
                     logger.info(f"Tentativa {attempt + 1} de obter dados para {symbol}")
-                    ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                    
+                    # Usa fetchOHLCV diretamente com parâmetros específicos
+                    ohlcv = self.exchange.fetch_ohlcv(
+                        symbol,
+                        timeframe,
+                        limit=limit,
+                        params={
+                            'recvWindow': 60000,
+                            'timeout': 30000
+                        }
+                    )
                     
                     if not ohlcv or len(ohlcv) == 0:
                         logger.error(f"Nenhum dado retornado para {symbol}")
@@ -225,7 +246,7 @@ class CryptoBot:
                         return None
                     
                     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms') - timedelta(hours=3)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                     df = df.sort_values('timestamp')
                     df = df.reset_index(drop=True)
                     
@@ -234,21 +255,25 @@ class CryptoBot:
                     return df
                     
                 except ccxt.NetworkError as e:
-                    logger.error(f"Erro de rede ao obter dados para {symbol}: {str(e)}")
+                    last_error = f"Erro de rede: {str(e)}"
+                    logger.error(f"Tentativa {attempt + 1}: {last_error}")
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         retry_delay *= 2
-                    else:
-                        raise
-                        
+                    continue
+                    
                 except ccxt.ExchangeError as e:
-                    logger.error(f"Erro da exchange ao obter dados para {symbol}: {str(e)}")
+                    last_error = f"Erro da exchange: {str(e)}"
+                    logger.error(f"Tentativa {attempt + 1}: {last_error}")
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         retry_delay *= 2
-                    else:
-                        raise
-                        
+                    continue
+            
+            if last_error:
+                logger.error(f"Todas as tentativas falharam para {symbol}: {last_error}")
+            return None
+            
         except Exception as e:
             logger.error(f"Erro inesperado ao obter dados para {symbol}: {str(e)}")
             import traceback

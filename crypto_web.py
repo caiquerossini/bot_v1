@@ -45,10 +45,22 @@ def init_bot():
         logger.info("Iniciando o bot...")
         bot = CryptoBot()
         if not bot:
-            logger.error("Falha ao criar instância do bot")
+            logger.error("Falha ao criar instância do bot - retornou None")
             return False
             
         logger.info(f"Bot criado com sucesso. Timeframes: {bot.timeframes}")
+        
+        # Tenta obter dados iniciais para verificar se o bot está funcionando
+        test_symbol = 'BTC/USDT'
+        test_timeframe = '1h'
+        logger.info(f"Testando obtenção de dados com {test_symbol} ({test_timeframe})")
+        
+        test_data = bot.get_historical_data(test_symbol, timeframe=test_timeframe)
+        if test_data is None or len(test_data) == 0:
+            logger.error("Falha ao obter dados de teste do bot")
+            return False
+            
+        logger.info(f"Teste de dados bem sucedido - obtidos {len(test_data)} registros")
         
         # Inicializa o dicionário de sinais para todos os símbolos
         for timeframe in bot.timeframes:
@@ -71,11 +83,24 @@ def init_bot():
         return False
 
 def ensure_bot_initialized():
-    """Garante que o bot está inicializado"""
+    """Garante que o bot está inicializado com várias tentativas"""
     global bot
     if not bot:
         logger.info("Bot não inicializado. Tentando inicializar...")
-        return init_bot()
+        max_retries = 3
+        retry_delay = 5  # segundos
+        
+        for attempt in range(max_retries):
+            logger.info(f"Tentativa {attempt + 1} de {max_retries}")
+            if init_bot():
+                return True
+            if attempt < max_retries - 1:  # Não espera após a última tentativa
+                logger.info(f"Aguardando {retry_delay} segundos antes da próxima tentativa...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Aumenta o tempo de espera entre tentativas
+        
+        logger.error("Todas as tentativas de inicialização falharam")
+        return False
     return True
 
 def bot_thread():
@@ -221,11 +246,16 @@ def profile():
 @app.before_request
 def before_request():
     """Executa antes de cada requisição para garantir que o bot está inicializado"""
+    if request.endpoint == 'static':
+        return  # Permite acesso a arquivos estáticos sem verificação
+        
     if request.endpoint != 'login' and not session.get('logged_in'):
         return redirect(url_for('login'))
+        
     if request.endpoint not in ['login', 'static']:
         if not ensure_bot_initialized():
-            return jsonify({'error': 'Falha ao inicializar o bot'}), 500
+            logger.error("Falha ao inicializar o bot antes da requisição")
+            return jsonify({'error': 'Falha ao inicializar o bot. Por favor, tente novamente mais tarde.'}), 500
 
 if __name__ == '__main__':
     try:

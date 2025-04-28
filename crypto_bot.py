@@ -10,7 +10,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Union, List, Tuple
 import config  # Importa as configurações de email
+import logging
 
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -132,8 +139,9 @@ class CryptoBot:
         """
         Inicializa o bot com a Binance (apenas API pública)
         """
-        print("Inicializando bot...")
+        logger.info("Iniciando inicialização do bot...")
         try:
+            logger.info("Configurando conexão com a Binance...")
             self.exchange = ccxt.binance({
                 'enableRateLimit': True,
                 'options': {
@@ -141,6 +149,7 @@ class CryptoBot:
                 }
             })
             
+            logger.info("Configurando parâmetros iniciais...")
             self.symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'SOL/USDT']
             self._timeframes = ['1h', '2h', '1d']  # Timeframes padrão
             self.signal_history = {
@@ -153,15 +162,22 @@ class CryptoBot:
             self.heikin_ashi = HeikinAshi()
             
             # Testa a conexão com a exchange
+            logger.info("Testando conexão com a Binance...")
             self.exchange.load_markets()
-            print("Conexão com a Binance estabelecida com sucesso")
+            logger.info("Conexão com a Binance estabelecida com sucesso")
             
-            print("Bot inicializado com sucesso!")
-            print(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
+            logger.info("Bot inicializado com sucesso!")
+            logger.info(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
+        except ccxt.NetworkError as e:
+            logger.error(f"Erro de rede ao conectar com a Binance: {str(e)}")
+            raise
+        except ccxt.ExchangeError as e:
+            logger.error(f"Erro da exchange: {str(e)}")
+            raise
         except Exception as e:
-            print(f"Erro ao inicializar o bot: {str(e)}")
+            logger.error(f"Erro inesperado ao inicializar o bot: {str(e)}")
             import traceback
-            traceback.print_exc()
+            logger.error(traceback.format_exc())
             raise
 
     @property

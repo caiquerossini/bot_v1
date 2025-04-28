@@ -193,29 +193,76 @@ def home():
 def get_prices():
     """Rota para obter os preços atualizados via AJAX"""
     try:
-        if not bot:
+        if not ensure_bot_initialized():
             logger.error("Bot não está inicializado")
             return jsonify({'error': 'Bot não inicializado'}), 500
             
         logger.info("Processando requisição get_prices")
+        
+        # Força atualização dos dados antes de retornar
+        current_time = pd.Timestamp.now()
+        for timeframe in bot.timeframes:
+            for symbol in bot.symbols:
+                try:
+                    logger.info(f"Obtendo dados para {symbol} ({timeframe})")
+                    df = bot.get_historical_data(symbol, timeframe=timeframe)
+                    if df is not None and len(df) > 0:
+                        current_price = float(df['close'].iloc[-1])
+                        bot.generate_signals(df, symbol, timeframe)
+                        
+                        signals_data[timeframe][symbol] = {
+                            'signal': bot.signal_history[timeframe].get(symbol),
+                            'current_price': current_price,
+                            'current_time': current_time
+                        }
+                        logger.info(f"Dados atualizados: {symbol} ({timeframe}) - Preço: {current_price:.8f}")
+                    else:
+                        logger.warning(f"Sem dados para {symbol} ({timeframe})")
+                except Exception as e:
+                    logger.error(f"Erro ao processar {symbol} ({timeframe}): {str(e)}")
+                    continue
+                
+                # Pequena pausa entre chamadas para respeitar rate limits
+                time.sleep(0.1)
+        
+        # Prepara os dados para retorno
         serialized_data = {
             timeframe: {} for timeframe in bot.timeframes
         }
+        
         for timeframe in bot.timeframes:
+            logger.info(f"Processando timeframe {timeframe}")
             for symbol, data in signals_data[timeframe].items():
                 if data:  # Verifica se há dados para este símbolo
                     signal_data = data.get('signal', {}) or {}
-                    serialized_data[timeframe][symbol] = {
-                        'current_price': float(data['current_price']) if data.get('current_price') else None,
-                        'signal': {
-                            'type': signal_data.get('type'),
-                            'price': float(signal_data.get('price', 0)) if signal_data.get('price') else None,
-                            'timestamp': signal_data.get('timestamp').strftime('%Y-%m-%d %H:%M:%S') if signal_data.get('timestamp') else None
-                        } if signal_data else None,
-                        'current_time': data['current_time'].strftime('%Y-%m-%d %H:%M:%S') if data.get('current_time') else None
-                    }
+                    current_price = data.get('current_price')
+                    
+                    if current_price is not None:
+                        logger.info(f"Dados encontrados para {symbol}: Preço atual = {current_price}")
+                        
+                        serialized_data[timeframe][symbol] = {
+                            'current_price': float(current_price),
+                            'signal': {
+                                'type': signal_data.get('type'),
+                                'price': float(signal_data.get('price', 0)) if signal_data.get('price') else None,
+                                'timestamp': signal_data.get('timestamp').strftime('%Y-%m-%d %H:%M:%S') if signal_data.get('timestamp') else None
+                            } if signal_data else None,
+                            'current_time': data['current_time'].strftime('%Y-%m-%d %H:%M:%S') if data.get('current_time') else None,
+                            'elapsed_time': 'Agora' if signal_data and (datetime.now() - signal_data['timestamp']).total_seconds() < 60 else str(int((datetime.now() - signal_data['timestamp']).total_seconds() / 60)) if signal_data and signal_data.get('timestamp') else None
+                        }
+                    else:
+                        logger.warning(f"Sem preço atual para {symbol}")
+        
+        # Adiciona status do bot
+        serialized_data['bot_status'] = True
+        
+        # Log do tamanho dos dados
+        response_data = jsonify(serialized_data)
+        logger.info(f"Tamanho dos dados serializados: {len(str(serialized_data))} bytes")
         logger.info("Dados processados com sucesso")
-        return jsonify(serialized_data)
+        
+        return response_data
+        
     except Exception as e:
         logger.error(f"Erro ao obter preços: {str(e)}")
         import traceback

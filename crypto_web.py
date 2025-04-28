@@ -70,13 +70,27 @@ def init_bot():
         logger.error(traceback.format_exc())
         return False
 
+def ensure_bot_initialized():
+    """Garante que o bot está inicializado"""
+    global bot
+    if not bot:
+        logger.info("Bot não inicializado. Tentando inicializar...")
+        return init_bot()
+    return True
+
 def bot_thread():
     """Thread para executar o bot em segundo plano"""
     global last_update_time
     while True:
         try:
+            if not ensure_bot_initialized():
+                logger.error("Falha ao inicializar o bot na thread. Tentando novamente em 60 segundos...")
+                time.sleep(60)
+                continue
+
             current_time = pd.Timestamp.now()
             last_update_time = current_time
+            
             for timeframe in bot.timeframes:
                 for symbol in bot.symbols:
                     try:
@@ -98,6 +112,8 @@ def bot_thread():
             time.sleep(60)
         except Exception as e:
             logger.error(f"Erro na thread do bot: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             time.sleep(60)
 
 # Usuário e senha fixos para autenticação simples
@@ -127,6 +143,9 @@ def home():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
     try:
+        if not ensure_bot_initialized():
+            return "Erro ao inicializar o bot. Tente novamente.", 500
+
         # Calcula os segundos restantes até a próxima atualização
         seconds_left = 60
         if last_update_time:
@@ -135,7 +154,7 @@ def home():
 
         # Processa os sinais para cada timeframe
         processed_signals = {}
-        for timeframe in ['1h', '2h', '1d']:  # Usando todos os timeframes do bot
+        for timeframe in ['1h', '2h', '1d']:
             processed_signals[timeframe] = {}
             if timeframe in signals_data:
                 for symbol, data in signals_data[timeframe].items():
@@ -156,6 +175,8 @@ def home():
         return render_template('index.html', signals=processed_signals, seconds_left=seconds_left)
     except Exception as e:
         logger.error(f"Erro na rota principal: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return f"Erro ao carregar a página: {str(e)}", 500
 
 @app.route('/get_prices')
@@ -197,6 +218,15 @@ def profile():
         return redirect(url_for('login'))
     return render_template('profile.html')
 
+@app.before_request
+def before_request():
+    """Executa antes de cada requisição para garantir que o bot está inicializado"""
+    if request.endpoint != 'login' and not session.get('logged_in'):
+        return redirect(url_for('login'))
+    if request.endpoint not in ['login', 'static']:
+        if not ensure_bot_initialized():
+            return jsonify({'error': 'Falha ao inicializar o bot'}), 500
+
 if __name__ == '__main__':
     try:
         # Cria diretórios se não existirem
@@ -204,9 +234,13 @@ if __name__ == '__main__':
         os.makedirs('static/css', exist_ok=True)
         
         # Inicializa o bot
+        logger.info("Tentando inicializar o bot...")
         if not init_bot():
-            logger.error("Falha ao inicializar o bot. Encerrando aplicação.")
-            sys.exit(1)
+            logger.error("Falha ao inicializar o bot. Tentando novamente em modo de recuperação...")
+            time.sleep(5)  # Pequeno delay antes de tentar novamente
+            if not init_bot():
+                logger.error("Falha definitiva ao inicializar o bot. Encerrando aplicação.")
+                sys.exit(1)
 
         # Inicia o bot em uma thread separada
         logger.info("Iniciando thread do bot...")
@@ -221,5 +255,5 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Erro fatal ao iniciar a aplicação: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         sys.exit(1) 

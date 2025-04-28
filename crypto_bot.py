@@ -133,25 +133,36 @@ class CryptoBot:
         Inicializa o bot com a Binance (apenas API pública)
         """
         print("Inicializando bot...")
-        self.exchange = ccxt.binance({
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'spot'
+        try:
+            self.exchange = ccxt.binance({
+                'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot'
+                }
+            })
+            
+            self.symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'SOL/USDT']
+            self._timeframes = ['1h', '2h', '1d']  # Timeframes padrão
+            self.signal_history = {
+                '1h': {},
+                '2h': {},
+                '1d': {}
             }
-        })
-        
-        self.symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'SOL/USDT']
-        self._timeframes = ['1h', '2h', '1d']  # Timeframes padrão
-        self.signal_history = {
-            '1h': {},
-            '2h': {},
-            '1d': {}
-        }
-        self.sent_emails = {}  # Controle de emails enviados
-        self.chandelier = ChandelierExit(atr_period=2, atr_multiplier=1.0, use_close=False)
-        self.heikin_ashi = HeikinAshi()
-        print("Bot inicializado com sucesso!")
-        print(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
+            self.sent_emails = {}  # Controle de emails enviados
+            self.chandelier = ChandelierExit(atr_period=2, atr_multiplier=1.0, use_close=False)
+            self.heikin_ashi = HeikinAshi()
+            
+            # Testa a conexão com a exchange
+            self.exchange.load_markets()
+            print("Conexão com a Binance estabelecida com sucesso")
+            
+            print("Bot inicializado com sucesso!")
+            print(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
+        except Exception as e:
+            print(f"Erro ao inicializar o bot: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     @property
     def timeframes(self):

@@ -44,6 +44,12 @@ def init_bot():
     try:
         logger.info("Iniciando o bot...")
         bot = CryptoBot()
+        if not bot:
+            logger.error("Falha ao criar instância do bot")
+            return False
+            
+        logger.info(f"Bot criado com sucesso. Timeframes: {bot.timeframes}")
+        
         # Inicializa o dicionário de sinais para todos os símbolos
         for timeframe in bot.timeframes:
             if timeframe not in signals_data:
@@ -54,10 +60,14 @@ def init_bot():
                     'current_price': None,
                     'current_time': None
                 }
+                logger.info(f"Inicializado {symbol} para timeframe {timeframe}")
+        
         logger.info("Bot inicializado com sucesso")
         return True
     except Exception as e:
-        logger.error(f"Erro ao inicializar o bot: {e}")
+        logger.error(f"Erro ao inicializar o bot: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 def bot_thread():
@@ -152,6 +162,11 @@ def home():
 def get_prices():
     """Rota para obter os preços atualizados via AJAX"""
     try:
+        if not bot:
+            logger.error("Bot não está inicializado")
+            return jsonify({'error': 'Bot não inicializado'}), 500
+            
+        logger.info("Processando requisição get_prices")
         serialized_data = {
             timeframe: {} for timeframe in bot.timeframes
         }
@@ -168,9 +183,12 @@ def get_prices():
                         } if signal_data else None,
                         'current_time': data['current_time'].strftime('%Y-%m-%d %H:%M:%S') if data.get('current_time') else None
                     }
+        logger.info("Dados processados com sucesso")
         return jsonify(serialized_data)
     except Exception as e:
-        logger.error(f"Erro ao obter preços: {e}")
+        logger.error(f"Erro ao obter preços: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route('/profile')
@@ -197,13 +215,11 @@ if __name__ == '__main__':
         bot_thread.start()
         
         # Inicia o servidor web
-        port = 5000
+        port = int(os.environ.get('PORT', 5000))
         logger.info(f"Iniciando servidor web na porta {port}...")
-        print('>>> Chegou no app.run() <<<')
         app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:
         logger.error(f"Erro fatal ao iniciar a aplicação: {e}")
-        print(f"Erro fatal ao iniciar a aplicação: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1) 

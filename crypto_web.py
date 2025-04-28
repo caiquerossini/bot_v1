@@ -54,6 +54,7 @@ def init_bot():
                     'current_price': None,
                     'current_time': None
                 }
+                logger.info(f"Inicializado {symbol} para {timeframe}")
         
         return True
     except Exception as e:
@@ -84,16 +85,21 @@ def ensure_bot_initialized():
 def bot_thread():
     """Thread para executar o bot em segundo plano"""
     global last_update_time, signals_data
+    retry_delay = 60  # Delay inicial entre tentativas
+
     while True:
         try:
             if not ensure_bot_initialized():
-                logger.error("Falha ao inicializar o bot na thread. Tentando novamente em 60 segundos...")
-                time.sleep(60)
+                logger.error(f"Falha ao inicializar o bot na thread. Tentando novamente em {retry_delay} segundos...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 300)  # Aumenta o delay até no máximo 5 minutos
                 continue
 
+            retry_delay = 60  # Reseta o delay após sucesso
             current_time = pd.Timestamp.now()
             last_update_time = current_time
             
+            logger.info("Iniciando atualização dos dados...")
             for timeframe in bot.timeframes:
                 for symbol in bot.symbols:
                     try:
@@ -107,9 +113,15 @@ def bot_thread():
                                 'current_price': current_price,
                                 'current_time': current_time
                             }
+                            logger.info(f"Dados atualizados: {symbol} ({timeframe}) - Preço: {current_price:.8f}")
+                        else:
+                            logger.warning(f"Sem dados para {symbol} ({timeframe})")
                     except Exception as e:
                         logger.error(f"Erro ao processar {symbol} ({timeframe}): {str(e)}")
                         continue
+                    
+                    # Pequena pausa entre chamadas para respeitar rate limits
+                    time.sleep(0.5)
             
             time.sleep(60)
         except Exception as e:
@@ -154,29 +166,27 @@ def home():
 
         # Processa os sinais para cada timeframe
         processed_signals = {}
-        for timeframe in ['1h', '2h', '1d']:
+        for timeframe in bot.timeframes:
             processed_signals[timeframe] = {}
-            if timeframe in signals_data:
-                for symbol, data in signals_data[timeframe].items():
-                    elapsed_time = ''
-                    if data['signal'] and data['signal'].get('timestamp'):
-                        time_diff = datetime.now() - data['signal']['timestamp']
-                        if time_diff.total_seconds() < 60:
-                            elapsed_time = 'Agora'
-                        else:
-                            elapsed_time = f"{int(time_diff.total_seconds() / 60)}"
+            for symbol in bot.symbols:
+                data = signals_data.get(timeframe, {}).get(symbol, {})
+                elapsed_time = ''
+                if data.get('signal') and data['signal'].get('timestamp'):
+                    time_diff = datetime.now() - data['signal']['timestamp']
+                    if time_diff.total_seconds() < 60:
+                        elapsed_time = 'Agora'
+                    else:
+                        elapsed_time = f"{int(time_diff.total_seconds() / 60)}"
 
-                    processed_signals[timeframe][symbol] = {
-                        'signal': data['signal'],
-                        'current_price': data['current_price'],
-                        'elapsed_time': elapsed_time
-                    }
+                processed_signals[timeframe][symbol] = {
+                    'signal': data.get('signal'),
+                    'current_price': data.get('current_price'),
+                    'elapsed_time': elapsed_time
+                }
         
         return render_template('index.html', signals=processed_signals, seconds_left=seconds_left)
     except Exception as e:
-        logger.error(f"Erro na rota principal: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Erro na rota principal: {str(e)}")
         return f"Erro ao carregar a página: {str(e)}", 500
 
 @app.route('/get_prices')

@@ -23,15 +23,44 @@
             </div>
         </div>
     </header>
+    
+    <!-- Barra de Status -->
+    <div style="max-width: var(--container-width); margin: 0 auto 2rem auto; background: var(--card-bg); padding: 1rem; border-radius: 10px; box-shadow: 0 2px 12px rgba(33,150,243,0.10);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <strong>Status:</strong> 
+                <span id="bot-status" style="color: var(--success-color);">
+                    {% if bot_initialized %}Ativo{% else %}Inicializando...{% endif %}
+                </span>
+            </div>
+            <div>
+                <strong>Pares Monitorados:</strong> 
+                <span>{{ signals | length }} timeframes × {{ signals['1h'] | length if '1h' in signals else 0 }} pares</span>
+            </div>
+            <div>
+                <strong>Última Atualização:</strong> 
+                <span id="last-update">{{ last_update.strftime('%H:%M:%S') if last_update else 'N/A' }}</span>
+            </div>
+        </div>
+    </div>
+
     <div style="display: flex; gap: 2rem; flex-wrap: wrap; justify-content: center; align-items: flex-start;">
-        {% for timeframe in ['1h', '2h', '1d'] %}
+        {% for timeframe in signals.keys() | sort %}
         <div class="timeframe-section" style="flex: 1 1 500px; min-width: 350px;">
-            <h1 class="timeframe-title">Sinais {{ timeframe }}</h1>
+            <h1 class="timeframe-title">
+                Sinais {{ timeframe }}
+                <span style="font-size: 0.9rem; color: var(--text-muted); margin-left: 1rem;">
+                    ({{ signals[timeframe] | length }} pares)
+                </span>
+            </h1>
             <div class="grid-container" style="grid-template-columns: repeat(2, 1fr); gap: 1.5rem;">
-                {% for symbol, data in signals[timeframe].items() %}
+                {% for symbol, data in signals[timeframe].items() | sort %}
                     <div class="signal-card {% if data.signal and data.signal.type == 'LONG' %}long{% elif data.signal and data.signal.type == 'SHORT' %}short{% endif %}">
                         <div class="header-info">
                             <span class="symbol">{{ symbol }}</span>
+                            {% if data.signal and data.signal.type %}
+                            <span class="signal-badge {{ data.signal.type.lower() }}">{{ data.signal.type }}</span>
+                            {% endif %}
                         </div>
                         <div class="price-info" style="display: flex; flex-direction: column; gap: 0.5rem;">
                             <div class="price-box">
@@ -39,6 +68,14 @@
                                 <span class="price-value" id="current-price-{{ timeframe }}-{{ symbol.replace('/', '-') }}">
                                     {{ "{:.8g}".format(data.current_price) if data.current_price else "N/A" }}
                                 </span>
+                                {% if data.signal and data.signal.price and data.current_price %}
+                                <span class="price-change" id="price-change-{{ timeframe }}-{{ symbol.replace('/', '-') }}">
+                                    {% set change = ((data.current_price - data.signal.price) / data.signal.price * 100) %}
+                                    <span class="{{ 'positive' if change >= 0 else 'negative' }}">
+                                        {{ '%+.2f%%' % change }}
+                                    </span>
+                                </span>
+                                {% endif %}
                             </div>
                             <div class="price-box">
                                 <span class="price-label">Preço do Sinal</span>
@@ -46,13 +83,6 @@
                                     {{ "{:.8g}".format(data.signal.price) if data.signal and data.signal.price else "N/A" }}
                                 </span>
                             </div>
-                        </div>
-                        <div class="signal-info">
-                            {% if data.signal and data.signal.type %}
-                            <span class="signal-type {{ data.signal.type.lower() }}">{{ data.signal.type }}</span>
-                            {% else %}
-                            <span class="signal-type">Sem sinal</span>
-                            {% endif %}
                         </div>
                         <div class="time-info">
                             {% if data.signal and data.signal.timestamp %}
@@ -73,6 +103,7 @@
         </div>
         {% endfor %}
     </div>
+
     <div class="time-bar">
         <div class="current-time" id="current-time"></div>
         <div class="countdown" id="countdown" style="margin-left: auto; font-size: 1.2rem; font-weight: 600;"></div>
@@ -84,7 +115,6 @@
             document.getElementById('current-time').textContent = now.toLocaleString('pt-BR');
         }
 
-        // Cronômetro regressivo sincronizado com o backend
         let countdownValue = parseInt('{{ seconds_left }}');
         function updateCountdown() {
             const countdownEl = document.getElementById('countdown');
@@ -99,6 +129,8 @@
             fetch('/get_prices')
                 .then(response => response.json())
                 .then(data => {
+                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString('pt-BR');
+                    
                     for (const timeframe in data) {
                         for (const symbol in data[timeframe]) {
                             const symbolData = data[timeframe][symbol];
@@ -117,8 +149,8 @@
                             
                             if (priceChangeElement && currentPrice && signalPrice) {
                                 const priceChange = ((currentPrice - signalPrice) / signalPrice) * 100;
-                                priceChangeElement.textContent = `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%`;
-                                priceChangeElement.className = `price-change ${priceChange >= 0 ? 'positive' : 'negative'}`;
+                                const changeText = `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%`;
+                                priceChangeElement.innerHTML = `<span class="${priceChange >= 0 ? 'positive' : 'negative'}">${changeText}</span>`;
                             }
                             
                             if (elapsedElement && symbolData.elapsed_time) {
@@ -127,15 +159,30 @@
                             }
                         }
                     }
+
+                    // Atualiza o status do bot
+                    const botStatus = document.getElementById('bot-status');
+                    if (data.bot_status) {
+                        botStatus.textContent = 'Ativo';
+                        botStatus.style.color = 'var(--success-color)';
+                    } else {
+                        botStatus.textContent = 'Inativo';
+                        botStatus.style.color = 'var(--danger-color)';
+                    }
                 })
-                .catch(error => console.error('Erro ao atualizar preços:', error));
+                .catch(error => {
+                    console.error('Erro ao atualizar preços:', error);
+                    document.getElementById('bot-status').textContent = 'Erro';
+                    document.getElementById('bot-status').style.color = 'var(--danger-color)';
+                });
         }
 
         setInterval(updateTime, 1000);
         setInterval(updateCountdown, 1000);
+        setInterval(updatePrices, 5000);
+        
         updateTime();
         updateCountdown();
-        setInterval(updatePrices, 5000);
         updatePrices();
     </script>
 </body>

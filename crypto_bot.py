@@ -147,11 +147,19 @@ class CryptoBot:
             })
             
             # Define os símbolos e timeframes
-            self.symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'SOL/USDT']
+            self.symbols = [
+                'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT', 
+                'ADA/USDT', 'DOGE/USDT', 'SOL/USDT', 'DOT/USDT',
+                'MATIC/USDT', 'AVAX/USDT'
+            ]
             self._timeframes = ['1h', '2h', '1d']
             
             # Inicializa estruturas de dados
             self.signal_history = {timeframe: {} for timeframe in self._timeframes}
+            for timeframe in self._timeframes:
+                for symbol in self.symbols:
+                    self.signal_history[timeframe][symbol] = None
+            
             self.sent_emails = {}
             
             # Inicializa indicadores
@@ -163,7 +171,8 @@ class CryptoBot:
             self.exchange.load_markets()
             
             # Testa obtenção de dados
-            test_data = self.get_historical_data('BTC/USDT', '1h', 10)
+            test_symbol = 'BTC/USDT'
+            test_data = self.get_historical_data(test_symbol, '1h', 10)
             if test_data is None:
                 raise Exception("Falha no teste de obtenção de dados")
                 
@@ -189,12 +198,14 @@ class CryptoBot:
         Obtém dados históricos de preços usando apenas API pública
         """
         try:
-            logger.info(f"Obtendo dados para {symbol} ({timeframe})")
-            
             # Tenta obter os dados com retry simples
             max_retries = 3
             for attempt in range(max_retries):
                 try:
+                    # Aguarda um pouco entre as chamadas para respeitar o rate limit
+                    if attempt > 0:
+                        time.sleep(2)
+                    
                     ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
                     
                     if not ohlcv or len(ohlcv) == 0:
@@ -206,13 +217,10 @@ class CryptoBot:
                     df = df.sort_values('timestamp')
                     df = df.reset_index(drop=True)
                     
-                    logger.info(f"Dados obtidos com sucesso para {symbol} - {len(df)} registros")
                     return df
                     
                 except Exception as e:
                     logger.error(f"Tentativa {attempt + 1}: Erro ao obter dados para {symbol}: {str(e)}")
-                    if attempt < max_retries - 1:
-                        time.sleep(2)
                     continue
             
             return None

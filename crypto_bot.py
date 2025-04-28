@@ -25,12 +25,12 @@ load_dotenv()
 
 # URLs da Binance
 BINANCE_URLS = [
-    'https://api.binance.com',
-    'https://api-gcp.binance.com',
-    'https://api1.binance.com',
-    'https://api2.binance.com',
-    'https://api3.binance.com',
-    'https://api4.binance.com'
+    'https://api.binance.com/api/v3',
+    'https://api-gcp.binance.com/api/v3',
+    'https://api1.binance.com/api/v3',
+    'https://api2.binance.com/api/v3',
+    'https://api3.binance.com/api/v3',
+    'https://api4.binance.com/api/v3'
 ]
 
 class HeikinAshi:
@@ -154,24 +154,37 @@ class CryptoBot:
         try:
             # Configuração da Binance com múltiplas URLs
             self.exchanges = []
+            
+            # Configuração base da exchange
+            exchange_config = {
+                'enableRateLimit': True,
+                'timeout': 30000,  # 30 segundos de timeout
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                    'recvWindow': 60000,
+                    'createMarketBuyOrderRequiresPrice': False,
+                    'defaultTimeInForce': 'GTC',
+                    'warnOnFetchOHLCVLimitArgument': False,
+                    'fetchImplementation': 'default',
+                    'fetchTradesMethod': 'publicGetAggTrades',
+                }
+            }
+            
+            # Tenta configurar cada URL
             for url in BINANCE_URLS:
                 try:
-                    exchange = ccxt.binance({
-                        'enableRateLimit': True,
-                        'urls': {
-                            'api': {
-                                'public': url,
-                                'private': url,
-                            }
-                        },
-                        'timeout': 30000,  # 30 segundos de timeout
-                        'options': {
-                            'defaultType': 'spot',
-                            'adjustForTimeDifference': True,
-                            'recvWindow': 60000
+                    config = exchange_config.copy()
+                    config['urls'] = {
+                        'api': {
+                            'public': url,
+                            'private': url,
                         }
-                    })
+                    }
+                    
+                    exchange = ccxt.binance(config)
                     self.exchanges.append(exchange)
+                    logger.info(f"Exchange configurada com sucesso para URL: {url}")
                 except Exception as e:
                     logger.warning(f"Erro ao configurar exchange com URL {url}: {str(e)}")
 
@@ -220,16 +233,22 @@ class CryptoBot:
         
         for exchange in self.exchanges:
             try:
+                # Tenta carregar os mercados
                 exchange.load_markets()
+                
+                # Tenta obter dados de teste
                 test_symbol = 'BTC/USDT'
                 test_data = self._get_historical_data_with_exchange(exchange, test_symbol, '1h', 10)
+                
                 if test_data is not None and len(test_data) > 0:
                     self.exchange = exchange  # Define esta como a exchange principal
                     success = True
                     logger.info(f"Conexão bem sucedida com {exchange.urls['api']['public']}")
                     break
             except Exception as e:
-                errors.append(str(e))
+                error_msg = f"Erro com {exchange.urls['api']['public']}: {str(e)}"
+                logger.warning(error_msg)
+                errors.append(error_msg)
                 continue
         
         if not success:
@@ -240,8 +259,14 @@ class CryptoBot:
         Obtém dados históricos usando uma exchange específica
         """
         try:
+            # Adiciona um pequeno delay para respeitar rate limits
+            time.sleep(0.1)
+            
+            # Tenta obter os dados OHLCV
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            
             if not ohlcv or len(ohlcv) == 0:
+                logger.warning(f"Nenhum dado retornado para {symbol} em {exchange.urls['api']['public']}")
                 return None
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -269,6 +294,9 @@ class CryptoBot:
             except Exception as e:
                 errors.append(str(e))
                 continue
+            
+            # Pequeno delay entre tentativas
+            time.sleep(0.5)
         
         logger.error(f"Falha ao obter dados de todas as URLs para {symbol}. Erros: {'; '.join(errors)}")
         return None

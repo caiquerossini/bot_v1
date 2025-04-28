@@ -195,16 +195,64 @@ class CryptoBot:
         Obtém dados históricos de preços usando apenas API pública
         """
         try:
-            print(f"Obtendo dados para {symbol}...")
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms') - timedelta(hours=3)
-            df = df.sort_values('timestamp')
-            df = df.reset_index(drop=True)
-            print(f"Dados obtidos com sucesso para {symbol}")
-            return df
+            logger.info(f"Obtendo dados para {symbol} ({timeframe})...")
+            
+            # Verifica se o símbolo existe na exchange
+            if symbol not in self.exchange.markets:
+                logger.error(f"Símbolo {symbol} não encontrado na Binance")
+                return None
+                
+            # Verifica se o timeframe é suportado
+            if timeframe not in self.exchange.timeframes:
+                logger.error(f"Timeframe {timeframe} não suportado pela Binance")
+                return None
+            
+            # Tenta obter os dados com retry
+            max_retries = 3
+            retry_delay = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Tentativa {attempt + 1} de obter dados para {symbol}")
+                    ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                    
+                    if not ohlcv or len(ohlcv) == 0:
+                        logger.error(f"Nenhum dado retornado para {symbol}")
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        return None
+                    
+                    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms') - timedelta(hours=3)
+                    df = df.sort_values('timestamp')
+                    df = df.reset_index(drop=True)
+                    
+                    logger.info(f"Dados obtidos com sucesso para {symbol} - {len(df)} registros")
+                    logger.info(f"Último preço para {symbol}: {df['close'].iloc[-1]:.8f}")
+                    return df
+                    
+                except ccxt.NetworkError as e:
+                    logger.error(f"Erro de rede ao obter dados para {symbol}: {str(e)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                    else:
+                        raise
+                        
+                except ccxt.ExchangeError as e:
+                    logger.error(f"Erro da exchange ao obter dados para {symbol}: {str(e)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                    else:
+                        raise
+                        
         except Exception as e:
-            print(f"Erro ao obter dados históricos para {symbol}: {e}")
+            logger.error(f"Erro inesperado ao obter dados para {symbol}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
     def analyze_signals(self, df):

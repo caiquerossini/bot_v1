@@ -105,7 +105,7 @@ def ensure_bot_initialized():
 
 def bot_thread():
     """Thread para executar o bot em segundo plano"""
-    global last_update_time
+    global last_update_time, signals_data
     while True:
         try:
             if not ensure_bot_initialized():
@@ -116,27 +116,49 @@ def bot_thread():
             current_time = pd.Timestamp.now()
             last_update_time = current_time
             
+            logger.info("Iniciando atualização dos dados...")
+            successful_updates = 0
+            total_pairs = len(bot.symbols) * len(bot.timeframes)
+            
             for timeframe in bot.timeframes:
+                logger.info(f"\nProcessando timeframe {timeframe}")
                 for symbol in bot.symbols:
                     try:
-                        logger.info(f"Processando {symbol} ({timeframe})")
+                        logger.info(f"Obtendo dados para {symbol} ({timeframe})")
                         df = bot.get_historical_data(symbol, timeframe=timeframe)
-                        if df is not None:
+                        
+                        if df is not None and len(df) > 0:
                             current_price = float(df['close'].iloc[-1])
                             bot.generate_signals(df, symbol, timeframe)
+                            
                             signals_data[timeframe][symbol] = {
-                                'signal': bot.signal_history[timeframe][symbol],
+                                'signal': bot.signal_history[timeframe].get(symbol),
                                 'current_price': current_price,
                                 'current_time': current_time
                             }
+                            successful_updates += 1
+                            logger.info(f"Dados atualizados com sucesso para {symbol} ({timeframe}) - Preço: {current_price:.8f}")
                         else:
                             logger.warning(f"Sem dados para {symbol} ({timeframe})")
+                            # Mantém os dados anteriores se existirem
+                            if timeframe in signals_data and symbol in signals_data[timeframe]:
+                                logger.info(f"Mantendo dados anteriores para {symbol} ({timeframe})")
+                            else:
+                                signals_data[timeframe][symbol] = {
+                                    'signal': None,
+                                    'current_price': None,
+                                    'current_time': None
+                                }
                     except Exception as e:
-                        logger.error(f"Erro ao processar {symbol} ({timeframe}): {e}")
+                        logger.error(f"Erro ao processar {symbol} ({timeframe}): {str(e)}")
+                        import traceback
+                        logger.error(traceback.format_exc())
                         continue
+            
+            logger.info(f"Atualização concluída. {successful_updates}/{total_pairs} pares atualizados com sucesso.")
             time.sleep(60)
         except Exception as e:
-            logger.error(f"Erro na thread do bot: {e}")
+            logger.error(f"Erro na thread do bot: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             time.sleep(60)

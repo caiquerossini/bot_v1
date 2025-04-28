@@ -293,12 +293,20 @@ if __name__ == '__main__':
         
         # Inicializa o bot
         logger.info("Tentando inicializar o bot...")
-        if not init_bot():
-            logger.error("Falha ao inicializar o bot. Tentando novamente em modo de recuperação...")
-            time.sleep(5)  # Pequeno delay antes de tentar novamente
-            if not init_bot():
-                logger.error("Falha definitiva ao inicializar o bot. Encerrando aplicação.")
-                sys.exit(1)
+        max_retries = 5
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            logger.info(f"Tentativa {attempt + 1} de {max_retries} de inicializar o bot")
+            if init_bot():
+                break
+            if attempt < max_retries - 1:
+                logger.info(f"Aguardando {retry_delay} segundos antes da próxima tentativa...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+        else:
+            logger.error("Falha definitiva ao inicializar o bot. Encerrando aplicação.")
+            sys.exit(1)
 
         # Inicia o bot em uma thread separada
         logger.info("Iniciando thread do bot...")
@@ -309,7 +317,14 @@ if __name__ == '__main__':
         # Inicia o servidor web
         port = int(os.environ.get('PORT', 5000))
         logger.info(f"Iniciando servidor web na porta {port}...")
-        app.run(host='0.0.0.0', port=port, debug=False)
+        
+        if os.environ.get('RENDER'):
+            # Configurações específicas para o Render
+            app.run(host='0.0.0.0', port=port, debug=False)
+        else:
+            # Configurações para desenvolvimento local
+            app.run(host='0.0.0.0', port=port, debug=False)
+            
     except Exception as e:
         logger.error(f"Erro fatal ao iniciar a aplicação: {e}")
         import traceback

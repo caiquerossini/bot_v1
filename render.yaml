@@ -3,7 +3,13 @@ services:
     name: crypto-signals
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn crypto_web:app
+    startCommand: gunicorn crypto_web:app --timeout 120 --workers 2 --threads 4
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0 
+        value: 3.11.0
+      - key: PYTHONUNBUFFERED
+        value: true
+      - key: WEB_CONCURRENCY
+        value: 2
+    healthCheckPath: /login
+    autoDeploy: true 

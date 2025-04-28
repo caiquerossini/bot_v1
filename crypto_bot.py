@@ -11,6 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Union, List, Tuple
 import config  # Importa as configurações de email
 import logging
+import random
 
 # Configuração de logging
 logging.basicConfig(
@@ -21,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 # Carregar variáveis de ambiente
 load_dotenv()
+
+# URLs da Binance
+BINANCE_URLS = [
+    'https://api.binance.com',
+    'https://api-gcp.binance.com',
+    'https://api1.binance.com',
+    'https://api2.binance.com',
+    'https://api3.binance.com',
+    'https://api4.binance.com'
+]
 
 class HeikinAshi:
     @staticmethod
@@ -141,10 +152,33 @@ class CryptoBot:
         """
         logger.info("Iniciando inicialização do bot...")
         try:
-            # Configuração básica da Binance
-            self.exchange = ccxt.binance({
-                'enableRateLimit': True
-            })
+            # Configuração da Binance com múltiplas URLs
+            self.exchanges = []
+            for url in BINANCE_URLS:
+                try:
+                    exchange = ccxt.binance({
+                        'enableRateLimit': True,
+                        'urls': {
+                            'api': {
+                                'public': url,
+                                'private': url,
+                            }
+                        },
+                        'timeout': 30000,  # 30 segundos de timeout
+                        'options': {
+                            'defaultType': 'spot',
+                            'adjustForTimeDifference': True,
+                            'recvWindow': 60000
+                        }
+                    })
+                    self.exchanges.append(exchange)
+                except Exception as e:
+                    logger.warning(f"Erro ao configurar exchange com URL {url}: {str(e)}")
+
+            if not self.exchanges:
+                raise Exception("Nenhuma exchange pôde ser configurada")
+
+            self.exchange = self.exchanges[0]  # Use a primeira exchange como padrão
             
             # Define os símbolos e timeframes
             self.symbols = [
@@ -168,20 +202,76 @@ class CryptoBot:
             
             # Testa a conexão
             logger.info("Testando conexão com a Binance...")
-            self.exchange.load_markets()
+            self._test_connection()
             
-            # Testa obtenção de dados
-            test_symbol = 'BTC/USDT'
-            test_data = self.get_historical_data(test_symbol, '1h', 10)
-            if test_data is None:
-                raise Exception("Falha no teste de obtenção de dados")
-                
             logger.info("Bot inicializado com sucesso!")
             logger.info(f"Monitorando {len(self.symbols)} pares: {', '.join(self.symbols)}")
             
         except Exception as e:
             logger.error(f"Erro ao inicializar o bot: {str(e)}")
             raise
+
+    def _test_connection(self):
+        """
+        Testa a conexão com todas as URLs disponíveis
+        """
+        success = False
+        errors = []
+        
+        for exchange in self.exchanges:
+            try:
+                exchange.load_markets()
+                test_symbol = 'BTC/USDT'
+                test_data = self._get_historical_data_with_exchange(exchange, test_symbol, '1h', 10)
+                if test_data is not None and len(test_data) > 0:
+                    self.exchange = exchange  # Define esta como a exchange principal
+                    success = True
+                    logger.info(f"Conexão bem sucedida com {exchange.urls['api']['public']}")
+                    break
+            except Exception as e:
+                errors.append(str(e))
+                continue
+        
+        if not success:
+            raise Exception(f"Falha ao conectar com todas as URLs da Binance. Erros: {'; '.join(errors)}")
+
+    def _get_historical_data_with_exchange(self, exchange, symbol, timeframe='1h', limit=100):
+        """
+        Obtém dados históricos usando uma exchange específica
+        """
+        try:
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            if not ohlcv or len(ohlcv) == 0:
+                return None
+            
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df = df.sort_values('timestamp')
+            df = df.reset_index(drop=True)
+            
+            return df
+        except Exception as e:
+            logger.error(f"Erro ao obter dados com exchange {exchange.urls['api']['public']}: {str(e)}")
+            return None
+
+    def get_historical_data(self, symbol, timeframe='1h', limit=100):
+        """
+        Obtém dados históricos tentando diferentes URLs
+        """
+        errors = []
+        random.shuffle(self.exchanges)  # Randomiza a ordem das exchanges para distribuir a carga
+        
+        for exchange in self.exchanges:
+            try:
+                data = self._get_historical_data_with_exchange(exchange, symbol, timeframe, limit)
+                if data is not None:
+                    return data
+            except Exception as e:
+                errors.append(str(e))
+                continue
+        
+        logger.error(f"Falha ao obter dados de todas as URLs para {symbol}. Erros: {'; '.join(errors)}")
+        return None
 
     @property
     def timeframes(self):
@@ -192,42 +282,6 @@ class CryptoBot:
         self._timeframes = value
         # Atualiza o histórico de sinais para os novos timeframes
         self.signal_history = {tf: {} for tf in value}
-
-    def get_historical_data(self, symbol, timeframe='1h', limit=100):
-        """
-        Obtém dados históricos de preços usando apenas API pública
-        """
-        try:
-            # Tenta obter os dados com retry simples
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    # Aguarda um pouco entre as chamadas para respeitar o rate limit
-                    if attempt > 0:
-                        time.sleep(2)
-                    
-                    ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-                    
-                    if not ohlcv or len(ohlcv) == 0:
-                        logger.error(f"Nenhum dado retornado para {symbol}")
-                        continue
-                    
-                    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                    df = df.sort_values('timestamp')
-                    df = df.reset_index(drop=True)
-                    
-                    return df
-                    
-                except Exception as e:
-                    logger.error(f"Tentativa {attempt + 1}: Erro ao obter dados para {symbol}: {str(e)}")
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Erro ao obter dados para {symbol}: {str(e)}")
-            return None
 
     def analyze_signals(self, df):
         """
